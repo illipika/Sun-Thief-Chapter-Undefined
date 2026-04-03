@@ -14,31 +14,55 @@
     cursor: none;
   }
 
-  /* ── GIF: full-bleed base ── */
+  /* ── GIF full-bleed base ── */
   #base-gif {
     position: fixed;
     inset: 0;
-    width: 100%;
-    height: 100%;
+    width: 100%; height: 100%;
     object-fit: cover;
     object-position: center center;
     z-index: 0;
   }
 
-  /* ── GRASS canvas: sits above GIF, covers bottom portion ── */
-  #grass-canvas {
+  /* ── GRASS layer ──
+     The PNG has a pure black background with white grass silhouettes.
+     mix-blend-mode: screen makes black transparent, white stays white.
+     We layer three copies: full, left-biased, right-biased — each
+     animated independently so different clusters sway at different rates. */
+  .grass-layer {
     position: fixed;
     bottom: 0; left: 0;
-    width: 100%;
-    height: 42vh;
-    z-index: 5;
+    width: 100%; height: 60vh;
+    object-fit: cover;
+    object-position: bottom center;
+    z-index: 10;
+    mix-blend-mode: screen;
     pointer-events: none;
+    transform-origin: bottom center;
+    will-change: transform;
+  }
+
+  #grass-left {
+    transform-origin: bottom left;
+    /* crop to left half via clip-path */
+    clip-path: inset(0 50% 0 0);
+  }
+
+  #grass-right {
+    transform-origin: bottom right;
+    clip-path: inset(0 0 0 50%);
+  }
+
+  /* full image for mid/background blades */
+  #grass-full {
+    opacity: 0.7;
+    transform-origin: bottom center;
   }
 
   /* ── RING drag layer ── */
   #ring-wrap {
     position: fixed;
-    z-index: 10;
+    z-index: 20;
     cursor: grab;
   }
   #ring-wrap:active { cursor: grabbing; }
@@ -48,32 +72,31 @@
     width: 100%; height: 100%;
   }
 
-  /* ── solved glow: very subtle white radial bloom ── */
+  /* ── solved glow: very subtle white bloom ── */
   #solved-glow {
     position: fixed;
     border-radius: 50%;
-    background: radial-gradient(circle, rgba(255,255,255,0.12) 0%, rgba(255,255,255,0.04) 45%, transparent 72%);
+    background: radial-gradient(circle,
+      rgba(255,255,255,0.10) 0%,
+      rgba(255,255,255,0.04) 40%,
+      transparent 70%);
     z-index: 8;
     pointer-events: none;
     opacity: 0;
-    transition: opacity 2.5s ease;
+    transition: opacity 3s ease;
   }
 
-  /* ── transition overlay ── */
+  /* ── fade to black ── */
   #fade-out {
     position: fixed; inset: 0;
     background: #000;
     z-index: 90;
     opacity: 0;
     pointer-events: none;
-    transition: opacity 2.8s ease;
+    transition: opacity 3s ease;
   }
-  #fade-out.active {
-    opacity: 1;
-    pointer-events: all;
-  }
+  #fade-out.active { opacity: 1; pointer-events: all; }
 
-  /* next link: invisible, covers whole screen after fade */
   #next-link {
     position: fixed; inset: 0;
     z-index: 95;
@@ -82,11 +105,11 @@
   }
   #next-link.active { opacity: 1; }
 
-  /* custom cursor */
+  /* cursor */
   #cursor {
     position: fixed;
     width: 4px; height: 4px;
-    background: rgba(255,255,255,0.55);
+    background: rgba(255,255,255,0.5);
     border-radius: 50%;
     pointer-events: none;
     z-index: 200;
@@ -99,76 +122,110 @@
 
 <div id="cursor"></div>
 
-<!-- base animation — must be in same directory as index.html -->
+<!-- base animation (same folder) -->
 <img id="base-gif" src="Your.gif" alt="">
 
 <!-- solved glow -->
 <div id="solved-glow"></div>
 
-<!-- invisible drag ring overlay -->
+<!-- grass layers — same PNG, three times, different clip + transform-origin -->
+<img class="grass-layer" id="grass-full"  src="Your__6_.png" alt="">
+<img class="grass-layer" id="grass-left"  src="Your__6_.png" alt="">
+<img class="grass-layer" id="grass-right" src="Your__6_.png" alt="">
+
+<!-- invisible drag ring -->
 <div id="ring-wrap">
   <svg id="ring-svg" viewBox="0 0 400 400" xmlns="http://www.w3.org/2000/svg">
-    <!-- Fixed alignment tick at top: hair-thin, very faint -->
-    <line x1="200" y1="2" x2="200" y2="14"
-          stroke="rgba(255,255,255,0.28)" stroke-width="1" stroke-linecap="round"/>
-
-    <!-- Rotating group -->
+    <!-- fixed alignment tick at top, very faint -->
+    <line x1="200" y1="2" x2="200" y2="13"
+          stroke="rgba(255,255,255,0.22)" stroke-width="1" stroke-linecap="round"/>
+    <!-- rotating group -->
     <g id="drag-ring">
-      <!-- Large invisible stroke ring = drag target -->
+      <!-- invisible wide stroke = drag target -->
       <circle cx="200" cy="200" r="185"
-              fill="none" stroke="rgba(255,255,255,0.0)"
-              stroke-width="40"/>
-      <!-- Very faint N marker dot — only visual cue that ring rotates -->
-      <circle cx="200" cy="16" r="2.5"
-              fill="none" stroke="rgba(255,255,255,0.18)" stroke-width="0.8"/>
+              fill="none" stroke="rgba(0,0,0,0)" stroke-width="40"/>
+      <!-- faint N marker so user senses rotation -->
+      <circle cx="200" cy="16" r="2.2"
+              fill="none" stroke="rgba(255,255,255,0.15)" stroke-width="0.8"/>
     </g>
   </svg>
 </div>
 
-<!-- fade & link -->
 <div id="fade-out"></div>
 <a id="next-link" href="#"></a>
-
-<!-- grass canvas -->
-<canvas id="grass-canvas"></canvas>
 
 <script>
 // ── CURSOR ──
 const cursor = document.getElementById('cursor');
-let mx = innerWidth/2, my = innerHeight/2;
+let mx = innerWidth / 2, my = innerHeight / 2;
 document.addEventListener('mousemove', e => {
   mx = e.clientX; my = e.clientY;
   cursor.style.left = mx + 'px';
   cursor.style.top  = my + 'px';
 });
 
-// ── POSITION ring overlay to match the planisphere circle in the GIF ──
-// GIF native size ~1456×816. Circle center ~(748, 385), radius ~318px in GIF coords.
+// ── GRASS ANIMATION ──
+// mouseNorm: 0 = far left, 1 = far right, 0.5 = center (no sway)
+let mouseNorm  = 0.5;
+let smoothNorm = 0.5; // lerped value for smooth response
+
+const grassFull  = document.getElementById('grass-full');
+const grassLeft  = document.getElementById('grass-left');
+const grassRight = document.getElementById('grass-right');
+
+// Each cluster has its own phase offset so they don't sway in lockstep
+const clusters = [
+  { el: grassLeft,  phaseOffset: 0,    speedMult: 1.0,  swayMult: 1.15 },
+  { el: grassRight, phaseOffset: 1.4,  speedMult: 0.85, swayMult: 0.95 },
+  { el: grassFull,  phaseOffset: 0.7,  speedMult: 0.6,  swayMult: 0.55 },
+];
+
+document.addEventListener('mousemove', e => {
+  mouseNorm = e.clientX / innerWidth;
+});
+
+let t = 0;
+function animateGrass() {
+  t += 0.012;
+  // smooth follow
+  smoothNorm += (mouseNorm - smoothNorm) * 0.04;
+
+  const windBias = (smoothNorm - 0.5) * 2; // -1 to +1
+
+  for (const c of clusters) {
+    // gentle ambient sway + mouse-driven lean
+    const ambient = Math.sin(t * c.speedMult + c.phaseOffset) * 0.8; // degrees
+    const lean    = windBias * 2.2 * c.swayMult;                     // degrees
+    const total   = ambient + lean;
+
+    c.el.style.transform = `skewX(${total}deg)`;
+  }
+
+  requestAnimationFrame(animateGrass);
+}
+animateGrass();
+
+// ── POSITION ring to match planisphere circle in the GIF ──
+// GIF native ~1456×816, circle centre ~(748, 385), radius ~318px
 const GIF_W = 1456, GIF_H = 816;
-const C_NX = 748  / GIF_W;   // 0.5137
-const C_NY = 385  / GIF_H;   // 0.4718
-const C_NR = 318  / GIF_W;   // 0.2183  (normalised by width)
+const C_NX = 748 / GIF_W;
+const C_NY = 385 / GIF_H;
+const C_NR = 318 / GIF_W;
 
 const ringWrap   = document.getElementById('ring-wrap');
 const solvedGlow = document.getElementById('solved-glow');
 
 function positionRing() {
   const vw = innerWidth, vh = innerHeight;
-  const gifAspect = GIF_W / GIF_H;
-  const vpAspect  = vw / vh;
+  const gifAR = GIF_W / GIF_H;
+  const vpAR  = vw / vh;
+  let rW, rH, oX = 0, oY = 0;
+  if (vpAR > gifAR) { rW = vw; rH = vw / gifAR; oY = (vh - rH) / 2; }
+  else               { rH = vh; rW = vh * gifAR;  oX = (vw - rW) / 2; }
 
-  let renderW, renderH, offX = 0, offY = 0;
-  if (vpAspect > gifAspect) {
-    renderW = vw; renderH = vw / gifAspect;
-    offY = (vh - renderH) / 2;
-  } else {
-    renderH = vh; renderW = vh * gifAspect;
-    offX = (vw - renderW) / 2;
-  }
-
-  const cx = offX + C_NX * renderW;
-  const cy = offY + C_NY * renderH;
-  const r  = C_NR * renderW;
+  const cx = oX + C_NX * rW;
+  const cy = oY + C_NY * rH;
+  const r  = C_NR * rW;
   const sz = r * 2;
 
   ringWrap.style.left   = (cx - r) + 'px';
@@ -176,24 +233,18 @@ function positionRing() {
   ringWrap.style.width  = sz + 'px';
   ringWrap.style.height = sz + 'px';
 
-  const glowR = r * 1.15;
-  solvedGlow.style.left   = (cx - glowR) + 'px';
-  solvedGlow.style.top    = (cy - glowR) + 'px';
-  solvedGlow.style.width  = (glowR * 2) + 'px';
-  solvedGlow.style.height = (glowR * 2) + 'px';
+  const gr = r * 1.2;
+  solvedGlow.style.left   = (cx - gr) + 'px';
+  solvedGlow.style.top    = (cy - gr) + 'px';
+  solvedGlow.style.width  = (gr * 2) + 'px';
+  solvedGlow.style.height = (gr * 2) + 'px';
 }
-
 positionRing();
 window.addEventListener('resize', positionRing);
 
 // ── DRAG ROTATION ──
 const dragRing = document.getElementById('drag-ring');
-let ringAngle = 61;   // start clearly misaligned
-let dragging  = false;
-let dragStart = 0;
-let ringStart = ringAngle;
-let solved    = false;
-const TOLERANCE = 5;
+let ringAngle = 58, dragging = false, dragStart = 0, ringStart = 58, solved = false;
 
 function pointerAngle(e) {
   const rect = ringWrap.getBoundingClientRect();
@@ -206,13 +257,12 @@ function pointerAngle(e) {
 
 function setAngle(a) {
   ringAngle = ((a % 360) + 360) % 360;
-  dragRing.setAttribute('transform',
-    `rotate(${ringAngle}, 200, 200)`);
+  dragRing.setAttribute('transform', `rotate(${ringAngle}, 200, 200)`);
 }
 
 function checkSolved() {
   const n = ringAngle > 180 ? 360 - ringAngle : ringAngle;
-  if (n <= TOLERANCE && !solved) triggerSolved();
+  if (n <= 5 && !solved) triggerSolved();
 }
 
 ringWrap.addEventListener('mousedown', e => {
@@ -226,7 +276,6 @@ window.addEventListener('mousemove', e => {
   checkSolved();
 });
 window.addEventListener('mouseup', () => { dragging = false; });
-
 ringWrap.addEventListener('touchstart', e => {
   if (solved) return;
   dragging = true; dragStart = pointerAngle(e); ringStart = ringAngle;
@@ -243,99 +292,15 @@ setAngle(ringAngle);
 function triggerSolved() {
   solved = true;
   ringWrap.style.cursor = 'default';
-
-  // very subtle white glow
   solvedGlow.style.opacity = '1';
-
   setTimeout(() => {
     solvedGlow.style.opacity = '0';
-    const fadeEl = document.getElementById('fade-out');
-    fadeEl.classList.add('active');
+    document.getElementById('fade-out').classList.add('active');
     setTimeout(() => {
       document.getElementById('next-link').classList.add('active');
-    }, 3000);
-  }, 2500);
+    }, 3200);
+  }, 2800);
 }
-
-// ── GRASS ──
-const gc = document.getElementById('grass-canvas');
-const gx = gc.getContext('2d');
-let blades = [];
-let mouseNorm = 0.5;
-
-function resizeGrass() {
-  gc.width  = innerWidth;
-  gc.height = Math.floor(innerHeight * 0.42);
-  buildBlades();
-}
-
-function buildBlades() {
-  blades = [];
-  const W = gc.width, H = gc.height;
-  const count = Math.floor(W / 4);
-  for (let i = 0; i < count; i++) {
-    blades.push({
-      x:     (i / count) * W + (Math.random() - 0.5) * 12,
-      h:     H * (0.42 + Math.random() * 0.48),
-      w:     1.0 + Math.random() * 2.6,
-      phase: Math.random() * Math.PI * 2,
-      speed: 0.3 + Math.random() * 0.6,
-      segs:  3 + Math.floor(Math.random() * 3),
-      lean:  (Math.random() - 0.5) * 0.14,
-      wide:  Math.random() < 0.28
-    });
-  }
-}
-
-let gt = 0;
-function drawGrass() {
-  const W = gc.width, H = gc.height;
-  gx.clearRect(0, 0, W, H);
-  gt += 0.016;
-
-  const wind = (mouseNorm - 0.5) * 0.6;
-
-  for (const b of blades) {
-    const sway = Math.sin(b.phase + gt * b.speed * 55 * 0.018) * 0.055
-                 + wind * 0.42 + b.lean;
-
-    gx.beginPath();
-    gx.moveTo(b.x, H);
-
-    let nx = b.x, ny = H;
-    for (let s = 0; s < b.segs; s++) {
-      const t2     = ((s + 1) / b.segs) ** 2;
-      const segH   = b.h / b.segs;
-      const offset = sway * t2 * b.h * 0.55;
-      const cpx    = b.x + offset * (s / b.segs);
-      const cpy    = H - (s + 0.5) * segH;
-      nx = b.x + offset;
-      ny = H - (s + 1) * segH;
-      gx.quadraticCurveTo(cpx, cpy, nx, ny);
-    }
-    if (b.wide) gx.lineTo(nx + (Math.random() - 0.5) * 3, ny - 4);
-
-    gx.strokeStyle = 'rgba(238,234,224,0.84)';
-    gx.lineWidth   = b.w;
-    gx.lineCap     = 'round';
-    gx.stroke();
-  }
-
-  // fade bottom to blend with image ground
-  const grad = gx.createLinearGradient(0, H * 0.68, 0, H);
-  grad.addColorStop(0, 'rgba(0,0,0,0)');
-  grad.addColorStop(1, 'rgba(0,0,0,0.88)');
-  gx.fillStyle = grad;
-  gx.fillRect(0, 0, W, H);
-}
-
-document.addEventListener('mousemove', e => { mouseNorm = e.clientX / innerWidth; });
-
-resizeGrass();
-window.addEventListener('resize', resizeGrass);
-
-function loop() { drawGrass(); requestAnimationFrame(loop); }
-loop();
 </script>
 </body>
 </html>
