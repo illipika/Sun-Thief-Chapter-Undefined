@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sun Thief</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #000; cursor: none; }
+
+  #base-gif {
+    position: fixed; inset: 0;
+    width: 100%; height: 100%;
+    object-fit: cover; object-position: center;
+    z-index: 0;
+  }
+
+  /* canvas sits on top of GIF, full screen, pointer-events off */
+  #grass-canvas {
+    position: fixed; inset: 0;
+    width: 100%; height: 100%;
+    z-index: 10;
+    pointer-events: none;
+    mix-blend-mode: screen;
+  }
+
+  #ring-wrap {
+    position: fixed; z-index: 20; cursor: grab;
+  }
+  #ring-wrap:active { cursor: grabbing; }
+  #ring-svg { display: block; width: 100%; height: 100%; }
+
+  #solved-glow {
+    position: fixed; border-radius: 50%;
+    background: radial-gradient(circle,
+      rgba(255,255,255,0.09) 0%,
+      rgba(255,255,255,0.03) 45%,
+      transparent 70%);
+    z-index: 8; pointer-events: none;
+    opacity: 0; transition: opacity 3s ease;
+  }
+
+  #fade-out {
+    position: fixed; inset: 0; background: #000;
+    z-index: 90; opacity: 0; pointer-events: none;
+    transition: opacity 3s ease;
+  }
+  #fade-out.active { opacity: 1; pointer-events: all; }
+  #next-link { position: fixed; inset: 0; z-index: 95; display: block; opacity: 0; }
+  #next-link.active { opacity: 1; }
+
+  #cursor {
+    position: fixed; width: 4px; height: 4px;
+    background: rgba(255,255,255,0.5); border-radius: 50%;
+    pointer-events: none; z-index: 200;
+    transform: translate(-50%,-50%); mix-blend-mode: difference;
+  }
+</style>
+</head>
+<body>
+
+<div id="cursor"></div>
+<img id="base-gif" src="Your.gif" alt="">
+<div id="solved-glow"></div>
+<canvas id="grass-canvas"></canvas>
+
+<div id="ring-wrap">
+  <svg id="ring-svg" viewBox="0 0 400 400" xmlns="http://www.w3.org/2000/svg">
+    <line x1="200" y1="2" x2="200" y2="13"
+          stroke="rgba(255,255,255,0.22)" stroke-width="1" stroke-linecap="round"/>
+    <g id="drag-ring">
+      <circle cx="200" cy="200" r="185" fill="none" stroke="rgba(0,0,0,0)" stroke-width="40"/>
+      <circle cx="200" cy="16" r="2.2" fill="none" stroke="rgba(255,255,255,0.15)" stroke-width="0.8"/>
+    </g>
+  </svg>
+</div>
+
+<div id="fade-out"></div>
+<a id="next-link" href="#"></a>
+
+<script>
+// ── CURSOR ──
+const cursor = document.getElementById('cursor');
+let mx = innerWidth/2, my = innerHeight/2;
+document.addEventListener('mousemove', e => {
+  mx = e.clientX; my = e.clientY;
+  cursor.style.left = mx+'px'; cursor.style.top = my+'px';
+});
+
+// ── GRASS CANVAS WARP ──
+// Strategy: draw the grass PNG into a canvas.
+// Every frame, re-draw it column-by-column with a vertical displacement
+// map: each column is shifted horizontally by an amount that is:
+//   - zero at the bottom (roots fixed)
+//   - maximum at the top (tips blow in the wind)
+// The displacement = mouseWind * (1 - y/imgH)^2 * maxShift
+// This is done by drawing horizontal 1px-tall strips, each offset by its
+// displacement at that y coordinate.
+
+const canvas = document.getElementById('grass-canvas');
+const ctx    = canvas.getContext('2d');
+
+const img = new Image();
+img.src = 'Your__6_.png';
+
+let imgLoaded = false;
+img.onload = () => { imgLoaded = true; };
+
+// smooth mouse wind: -1 (full left) to +1 (full right), 0 = center
+let targetWind = 0;
+let currentWind = 0;
+
+document.addEventListener('mousemove', e => {
+  // distance from center, normalised
+  targetWind = ((e.clientX / innerWidth) - 0.5) * 2;
+});
+
+function resizeCanvas() {
+  canvas.width  = innerWidth;
+  canvas.height = innerHeight;
+}
+resizeCanvas();
+window.addEventListener('resize', resizeCanvas);
+
+// Off-screen buffer to hold the source grass image scaled to canvas
+let offscreen, offCtx;
+
+function buildOffscreen() {
+  offscreen = document.createElement('canvas');
+  offscreen.width  = canvas.width;
+  offscreen.height = canvas.height;
+  offCtx = offscreen.getContext('2d');
+}
+
+function drawWarped() {
+  if (!imgLoaded) return;
+
+  const W = canvas.width;
+  const H = canvas.height;
+
+  // rebuild offscreen if size changed
+  if (!offscreen || offscreen.width !== W || offscreen.height !== H) {
+    buildOffscreen();
+  }
+
+  // draw full scaled image to offscreen
+  offCtx.clearRect(0, 0, W, H);
+  offCtx.drawImage(img, 0, 0, W, H);
+
+  // max horizontal tip displacement in pixels
+  const maxShift = W * 0.022 * currentWind; // ~2.2% of width at full wind
+
+  // draw warped strips into main canvas
+  ctx.clearRect(0, 0, W, H);
+
+  // The grass occupies the bottom ~55% of the image.
+  // roots = bottom of canvas (y = H), tips = upper portion of grass (y ~ H*0.45)
+  // For y from 0 to H, displacement tapers from maxShift at top → 0 at bottom.
+
+  // Draw in horizontal strips of 2px for performance
+  const strip = 2;
+  for (let y = 0; y < H; y += strip) {
+    // normalised position from bottom: 0 at bottom, 1 at top
+    const fromBottom = 1 - (y / H);
+    // quadratic: tips move much more than base
+    const disp = maxShift * fromBottom * fromBottom;
+
+    ctx.drawImage(
+      offscreen,
+      0, y, W, strip,          // source
+      disp, y, W, strip         // dest (shifted horizontally)
+    );
+  }
+}
+
+// ── ANIMATION LOOP ──
+function loop() {
+  // lerp wind
+  currentWind += (targetWind - currentWind) * 0.05;
+  drawWarped();
+  requestAnimationFrame(loop);
+}
+loop();
+
+// ── POSITION RING ──
+const GIF_W = 1456, GIF_H = 816;
+const C_NX = 748/GIF_W, C_NY = 385/GIF_H, C_NR = 318/GIF_W;
+const ringWrap = document.getElementById('ring-wrap');
+const solvedGlow = document.getElementById('solved-glow');
+
+function positionRing() {
+  const vw = innerWidth, vh = innerHeight;
+  const gifAR = GIF_W/GIF_H, vpAR = vw/vh;
+  let rW, rH, oX=0, oY=0;
+  if (vpAR > gifAR) { rW=vw; rH=vw/gifAR; oY=(vh-rH)/2; }
+  else               { rH=vh; rW=vh*gifAR; oX=(vw-rW)/2; }
+  const cx=oX+C_NX*rW, cy=oY+C_NY*rH, r=C_NR*rW, sz=r*2;
+  ringWrap.style.cssText = `left:${cx-r}px;top:${cy-r}px;width:${sz}px;height:${sz}px;`;
+  const gr=r*1.2;
+  solvedGlow.style.cssText = `left:${cx-gr}px;top:${cy-gr}px;width:${gr*2}px;height:${gr*2}px;border-radius:50%;position:fixed;z-index:8;pointer-events:none;opacity:0;transition:opacity 3s ease;background:radial-gradient(circle,rgba(255,255,255,0.09) 0%,rgba(255,255,255,0.03) 45%,transparent 70%);`;
+}
+positionRing();
+window.addEventListener('resize', positionRing);
+
+// ── DRAG ROTATION ──
+const dragRing = document.getElementById('drag-ring');
+let ringAngle=58, dragging=false, dragStart=0, ringStart=58, solved=false;
+
+function pointerAngle(e) {
+  const rect=ringWrap.getBoundingClientRect();
+  const cx=rect.left+rect.width/2, cy=rect.top+rect.height/2;
+  const px=e.touches?e.touches[0].clientX:e.clientX;
+  const py=e.touches?e.touches[0].clientY:e.clientY;
+  return Math.atan2(py-cy,px-cx)*180/Math.PI;
+}
+function setAngle(a) {
+  ringAngle=((a%360)+360)%360;
+  dragRing.setAttribute('transform',`rotate(${ringAngle},200,200)`);
+}
+function checkSolved() {
+  const n=ringAngle>180?360-ringAngle:ringAngle;
+  if(n<=5&&!solved) triggerSolved();
+}
+ringWrap.addEventListener('mousedown',e=>{ if(solved)return; dragging=true; dragStart=pointerAngle(e); ringStart=ringAngle; e.preventDefault(); });
+window.addEventListener('mousemove',e=>{ if(!dragging||solved)return; setAngle(ringStart+pointerAngle(e)-dragStart); checkSolved(); });
+window.addEventListener('mouseup',()=>{ dragging=false; });
+ringWrap.addEventListener('touchstart',e=>{ if(solved)return; dragging=true; dragStart=pointerAngle(e); ringStart=ringAngle; },{passive:true});
+window.addEventListener('touchmove',e=>{ if(!dragging||solved)return; setAngle(ringStart+pointerAngle(e)-dragStart); checkSolved(); },{passive:true});
+window.addEventListener('touchend',()=>{ dragging=false; });
+setAngle(ringAngle);
+
+function triggerSolved() {
+  solved=true; ringWrap.style.cursor='default';
+  solvedGlow.style.opacity='1';
+  setTimeout(()=>{
+    solvedGlow.style.opacity='0';
+    document.getElementById('fade-out').classList.add('active');
+    setTimeout(()=>{ document.getElementById('next-link').classList.add('active'); },3200);
+  },2800);
+}
+</script>
+</body>
+</html>
